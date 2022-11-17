@@ -1,0 +1,219 @@
+mbed&&PC
+Assignment2.c:
+#include <stdlib.h>
+#include <stdio.h>
+#ifdef _WIN32
+#include <Windows.h>
+#else
+#include <unisted.h>
+#endif // _WIN32
+#include "rs232.h"
+int main(void)
+{
+	int n = 0, cport_nr = 9, bdrate = 9600, score = 0;
+	char mode[] = { '8','N','1',0 };
+	char buf_1[256]="\0", buf_2[256]="\0"; //used to get data from the mbed
+	if (RS232_OpenComport(cport_nr, bdrate, mode, 0)) //try to open the comport
+	{
+		printf("Can't open comport!\n");
+		return 0;
+	}
+	printf("Please use keypad to enter the answer.\n");
+	while (n == 0)
+	{
+		n = RS232_PollComport(cport_nr, buf_1, 256); // if buf_1 get data from mbed, this program will continue.
+	}
+	for (int i = 0; i < 256; i++)
+	{
+		buf_2[i] = ' ';		//clear the buf_2
+	}
+	char guess[512];
+	while(1)
+	{
+		printf("\nWhat is your guess? ");
+		fgets(guess, sizeof(guess), stdin); //get the guess number from PC keyboard
+		printf("%s", guess);
+		RS232_cputs(cport_nr, guess);	//send the guess number to mbed
+		Sleep(200);
+		RS232_PollComport(cport_nr, buf_2, 256);//get the check result from mbed
+		for (int i = 0; i < 30; i++)
+		{
+			printf("%c", buf_2[i]);		
+		}
+		if (buf_2[4] == 'g') {		//if succeed
+			break;
+		}
+		score++;
+		for (int i = 0; i < 256; i++)
+		{
+			buf_2[i] = ' ';		//if not succeed,clear the buf_2
+		}
+	}
+	printf("\nYour score is %d", score);
+	RS232_CloseComport(cport_nr); //close the comport
+	return 0;
+}
+
+
+mbed_file:
+#include "mbed.h"
+#include "TextLCD.h"
+BusOut rows(p26,p25,p24);
+BusIn cols(p14,p13,p12,p11);
+Serial pc(USBTX,USBRX);
+TextLCD lcd(p15, p16, p17, p18, p19, p20);
+SPI sw(p5, p6, p7); //mosi miso, sclk
+DigitalOut cs(p8);
+char Keytable[] = {'F','E','D','C','3','6','9','B','2','5','8','0','1','4','7','A'};
+char getKey() //used to get secret number from mbed
+{
+    char key=' ';
+    for (int i=0;i<=3;i++)
+    {
+    rows=i;
+    for(int j=0;j<=3;j++)
+    {
+    if(((cols^0x00FF)&(0x0001<<j))!=0)
+    key = Keytable[(i*4)+j];
+    }
+    }
+    return key;
+}
+int within(int guess, int secret, int range) //used to check the distance
+{
+    int distance = abs(guess - secret);
+    if(distance < range)
+    return 1;
+    else
+    return 0;
+}
+int examine(char ch)  //used to check the second number of guess
+{
+switch(ch){
+    case '0':return 0;
+    case '1':return 0;
+    case '2':return 0;
+    case '3':return 0;
+    case '4':return 0;
+    case '5':return 0;
+    case '6':return 0;
+    case '7':return 0;
+    case '8':return 0;
+    case '9':return 0;
+    default: return 1;
+}}
+int error_check(int check_number)  //check whether the secret number and the guess number out of range
+{
+    if((check_number > 30) || (check_number < 0))
+    return 1;
+    else
+    return 0;
+}
+int main()
+{
+again: //this is a restart signal,if the secret number out of range, the program will start again
+int score=0;
+char base='0';   .
+int secret_number=0;
+char number_1=' ', number_2=' ';
+char confirm='C'; 
+while(1) //used to get the secret number
+{
+    number_1 = getKey();
+    if(number_1 != ' ')
+    break;
+}
+wait(0.5);
+while(1)
+{
+    number_2 = getKey();
+    if(number_2 != ' ')
+    break;
+}
+if(confirm!=number_2){
+    secret_number=(number_1-base)*10 + (number_2-base);
+}
+else{
+    secret_number=number_1-base;
+}
+if(error_check(secret_number))//check the secret number
+{
+    lcd.locate(0,0);
+    lcd.printf("guess should be less than 30.\n");
+    wait(4);
+    //to clear the data in lcd
+    lcd.locate(0,0);
+    lcd.printf("                ");
+    lcd.locate(0,1);
+    lcd.printf("                ");
+    lcd.printf("Enter again.\n");
+    goto again;
+}
+lcd.locate(0,0);
+lcd.printf("secret number:%d",secret_number);
+lcd.locate(0,1);
+lcd.printf(" ");
+pc.printf("Start!"); //send a begin message to pc 
+int ans, num_1, num_2;
+char guess[256];
+while(1)
+{
+    for(int i=0; i<2; i++) //Clear "guess"
+    {
+        guess[i] = ' ';
+    }
+    pc.gets(guess,256); //get the guess number from the PC
+    if(examine(guess[1]) == 1)  //(guess[1] == '\n')
+    {
+        num_1=(int)guess[0]-(int)base;
+        ans=num_1;
+    }
+    else
+    {
+        num_1=guess[0]-base;
+        num_2=guess[1]-base;
+        ans=num_1*10 + num_2;
+    }
+    if(error_check(ans) == 1)
+    {
+        pc.printf("guess should be less than 30\n");
+        score++;
+        continue;
+    }
+    if(ans == secret_number)
+    {
+        pc.printf("You guessed correctly!\n");
+        break;
+    }
+    //score is the guesses number before the gusss is right.
+    score++;
+    int result=0, range=3;
+    result = within(ans, secret_number, range);
+    if(result==0)
+        pc.printf("You are way off.\n");
+    else{
+        pc.printf("You are less than %d away!\n", range);
+    }
+    lcd.locate(0,1);
+    lcd.printf("current guess:%d",ans);
+}
+    lcd.locate(0,1);
+    lcd.printf("                ");
+    lcd.locate(0,1);
+    lcd.printf("RIGHT! SCORE:%d ",score);
+//if the guess is right,the green leds will flash five times
+cs=0; // select the device by setting chip select low
+sw.format(16,0); // setup the SPI for 16 bit data
+sw.frequency(1000000); // 1MHz clock rate
+for(int i=0;i<5;i++){
+    sw.write(0x56AA);
+    cs = 1; //deselect the device
+    cs = 0;
+    wait(1);
+    sw.write(0x0000);
+    cs = 1;
+    cs = 0;
+    wait(1);
+}
+return 0;
+}
